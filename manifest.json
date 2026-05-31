@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "MFE Override",
+  "version": "1.0.0",
+  "description": "Override Micro Frontend remote URLs at runtime for Angular Native Federation apps.",
+  "permissions": [
+    "declarativeNetRequest",
+    "storage"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "MFE Override"
+  }
+}
