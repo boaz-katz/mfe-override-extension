@@ -12,6 +12,8 @@
   --red:          #ef4444;
   --blue:         #3b82f6;
   --blue-dim:     #eff6ff;
+  --amber:        #f59e0b;
+  --amber-dim:    #fef3c7;
   --radius:       6px;
   --font:         system-ui, -apple-system, sans-serif;
   --mono:         ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
@@ -67,12 +69,13 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* ── Badge ────────────────────────────────────────────────────────────────── */
+/* ── Badges ───────────────────────────────────────────────────────────────── */
 .badge {
   font-size: 11px;
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 20px;
+  white-space: nowrap;
 }
 
 .badge--active {
@@ -83,6 +86,115 @@ body {
 .badge--inactive {
   background: #f1f5f9;
   color: var(--text-muted);
+}
+
+.badge--configured {
+  background: var(--blue-dim);
+  color: #1d4ed8;
+  font-size: 10px;
+  padding: 2px 6px;
+}
+
+/* ── Section headers ──────────────────────────────────────────────────────── */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 14px 6px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+  /* top border only for the Overrides sub-header */
+}
+
+.section-header--overrides {
+  border-top: 1px solid var(--border);
+}
+
+.section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+/* ── Detected remotes list ────────────────────────────────────────────────── */
+.detected-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.detected-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.detected-item:hover {
+  background: var(--bg-subtle);
+}
+
+.detected-url {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-use {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--blue);
+  background: var(--blue-dim);
+  color: var(--blue);
+  transition: background 0.12s, color 0.12s;
+}
+
+.btn-use:hover {
+  background: var(--blue);
+  color: #fff;
+}
+
+/* ── Detected empty / scanning states ────────────────────────────────────── */
+.detected-empty {
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.detected-scanning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Simple CSS-only pulsing dot */
+.dot-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber);
+  flex-shrink: 0;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1;   transform: scale(1);    }
+  50%       { opacity: 0.4; transform: scale(0.75); }
 }
 
 /* ── Override list ────────────────────────────────────────────────────────── */
@@ -220,9 +332,31 @@ body {
   color: var(--red);
 }
 
-/* ── Empty state ──────────────────────────────────────────────────────────── */
+/* ── Edit button ──────────────────────────────────────────────────────────── */
+.btn-edit {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.1s, color 0.1s;
+}
+
+.btn-edit:hover {
+  background: var(--blue-dim);
+  color: var(--blue);
+}
+
+/* ── Empty state (no overrides) ───────────────────────────────────────────── */
 .empty-state {
-  padding: 28px 16px;
+  padding: 20px 16px;
   text-align: center;
   color: var(--text-muted);
   line-height: 1.6;

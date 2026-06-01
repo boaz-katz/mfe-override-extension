@@ -1,6 +1,9 @@
 // ── State ─────────────────────────────────────────────────────────────────────
-let overrides = [];
-let nextId = 1;
+let overrides    = [];
+let nextId       = 1;
+let detectedUrls = [];   // detected remoteEntry URLs for the current tab
+let currentTabId = null;
+let editingId    = null; // ID of the override currently being edited (null = add mode)
 
 // ── Storage helpers ───────────────────────────────────────────────────────────
 async function loadFromStorage() {
@@ -9,34 +12,114 @@ async function loadFromStorage() {
   nextId    = data.nextId    ?? 1;
 }
 
+async function loadDetected() {
+  if (currentTabId === null) {
+    detectedUrls = [];
+    return;
+  }
+  const { detected = {} } = await chrome.storage.local.get('detected');
+  detectedUrls = detected[currentTabId] ?? [];
+}
+
 async function saveToStorage() {
   await chrome.storage.local.set({ overrides, nextId });
-  // Also tell the background to apply rules immediately (belt-and-suspenders
-  // alongside the storage.onChanged listener in background.js).
-  chrome.runtime.sendMessage({ type: 'APPLY_RULES' }).catch(() => {
-    // Service worker may have been sleeping; storage.onChanged will wake it.
-  });
+  // Tell the background to apply rules immediately, in addition to the
+  // storage.onChanged listener already present in background.js.
+  chrome.runtime.sendMessage({ type: 'APPLY_RULES' }).catch(() => {});
+}
+
+// ── Tab resolution ────────────────────────────────────────────────────────────
+async function resolveCurrentTab() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    currentTabId = tab?.id ?? null;
+  } catch {
+    currentTabId = null;
+  }
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 function render() {
+  renderDetected();
+  renderOverrides();
+  renderBadge();
+}
+
+// ── Detected section ──────────────────────────────────────────────────────────
+function renderDetected() {
+  const list         = document.getElementById('detected-list');
+  const countBadge   = document.getElementById('detected-count');
+
+  if (currentTabId === null) {
+    countBadge.textContent = '—';
+    countBadge.className   = 'badge badge--inactive';
+    list.innerHTML = `<div class="detected-empty">Open a regular page to start detecting remotes.</div>`;
+    return;
+  }
+
+  if (detectedUrls.length === 0) {
+    countBadge.textContent = 'scanning';
+    countBadge.className   = 'badge badge--inactive';
+    list.innerHTML = `
+      <div class="detected-scanning">
+        <span class="dot-pulse"></span>
+        Waiting for remoteEntry.json requests&hellip;
+      </div>`;
+    return;
+  }
+
+  countBadge.textContent = `${detectedUrls.length} found`;
+  countBadge.className   = 'badge badge--active';
+  list.innerHTML = detectedUrls.map((url) => buildDetectedItemHTML(url)).join('');
+}
+
+function buildDetectedItemHTML(url) {
+  const alreadyConfigured = overrides.some((o) => o.originalUrl === url);
+  const action = alreadyConfigured
+    ? `<span class="badge badge--configured">Configured</span>`
+    : `<button class="btn-use" data-action="use-detected" data-url="${esc(url)}">Override</button>`;
+
+  return `
+    <div class="detected-item">
+      <span class="detected-url" title="${esc(url)}">${esc(url)}</span>
+      ${action}
+    </div>
+  `;
+}
+
+// Event delegation for the detected list's "Override" buttons.
+document.getElementById('detected-list').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action="use-detected"]');
+  if (btn) preloadOverride(btn.dataset.url);
+});
+
+// ── Override section ──────────────────────────────────────────────────────────
+function renderOverrides() {
   const list       = document.getElementById('override-list');
   const emptyState = document.getElementById('empty-state');
 
   if (overrides.length === 0) {
-    list.innerHTML = '';
+    list.innerHTML    = '';
     emptyState.hidden = false;
   } else {
     emptyState.hidden = true;
-    list.innerHTML = overrides.map((o) => buildItemHTML(o)).join('');
+    list.innerHTML    = overrides.map((o) => buildItemHTML(o)).join('');
   }
+}
 
-  renderBadge();
+/** Mirror of the helper in background.js — derive the base path from a URL. */
+function getBaseUrl(url) {
+  const i = url.lastIndexOf('/');
+  return i >= 0 ? url.slice(0, i + 1) : url + '/';
 }
 
 function buildItemHTML(o) {
   const checked  = o.enabled ? 'checked' : '';
   const disabled = o.enabled ? '' : ' is-disabled';
+  // Show the base-path pattern that is actually intercepted (…/*) so the user
+  // can see at a glance that all chunks — not just remoteEntry.json — redirect.
+  const fromPattern = esc(getBaseUrl(o.originalUrl)) + '*';
+  const toPattern   = esc(getBaseUrl(o.overrideUrl))  + '*';
   return `
     <div class="override-item${disabled}" data-id="${o.id}" role="listitem">
       <label class="toggle" title="${o.enabled ? 'Disable' : 'Enable'} override">
@@ -46,19 +129,20 @@ function buildItemHTML(o) {
       <div class="override-info">
         <div class="override-name">${esc(o.name)}</div>
         <div class="override-urls">
-          <span class="url" title="${esc(o.originalUrl)}">${esc(o.originalUrl)}</span>
+          <span class="url" title="${fromPattern}">${fromPattern}</span>
           <span class="arrow">&#8594;</span>
-          <span class="url override-url" title="${esc(o.overrideUrl)}">${esc(o.overrideUrl)}</span>
+          <span class="url override-url" title="${toPattern}">${toPattern}</span>
         </div>
       </div>
+      <button class="btn-edit"   data-action="edit"   title="Edit override">&#9998;</button>
       <button class="btn-remove" data-action="remove" title="Remove override">&#215;</button>
     </div>
   `;
 }
 
 function renderBadge() {
-  const count  = overrides.filter((o) => o.enabled).length;
-  const badge  = document.getElementById('active-badge');
+  const count = overrides.filter((o) => o.enabled).length;
+  const badge = document.getElementById('active-badge');
   if (count > 0) {
     badge.textContent = `${count} active`;
     badge.className   = 'badge badge--active';
@@ -66,16 +150,6 @@ function renderBadge() {
     badge.textContent = 'none active';
     badge.className   = 'badge badge--inactive';
   }
-}
-
-// HTML-escape to prevent XSS when injecting user-supplied strings into innerHTML
-function esc(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 // ── Override actions ──────────────────────────────────────────────────────────
@@ -93,7 +167,7 @@ function removeOverride(id) {
   render();
 }
 
-// ── Event delegation on the list ─────────────────────────────────────────────
+// ── Event delegation on the override list ─────────────────────────────────────
 document.getElementById('override-list').addEventListener('change', (e) => {
   if (e.target.dataset.action === 'toggle') {
     const item = e.target.closest('[data-id]');
@@ -102,10 +176,11 @@ document.getElementById('override-list').addEventListener('change', (e) => {
 });
 
 document.getElementById('override-list').addEventListener('click', (e) => {
-  if (e.target.dataset.action === 'remove') {
-    const item = e.target.closest('[data-id]');
-    if (item) removeOverride(Number(item.dataset.id));
-  }
+  const item = e.target.closest('[data-id]');
+  if (!item) return;
+  const id = Number(item.dataset.id);
+  if (e.target.dataset.action === 'remove') removeOverride(id);
+  if (e.target.dataset.action === 'edit')   openEditForm(id);
 });
 
 // ── Add-form logic ────────────────────────────────────────────────────────────
@@ -132,46 +207,149 @@ saveBtn.addEventListener('click', () => {
     formError.textContent = 'All fields are required.';
     return;
   }
-
   if (!isValidUrl(originalUrl)) {
     formError.textContent = 'Original URL is not a valid URL.';
     return;
   }
-
   if (!isValidUrl(overrideUrl)) {
     formError.textContent = 'Override URL is not a valid URL.';
     return;
   }
 
-  overrides.push({ id: nextId++, name, originalUrl, overrideUrl, enabled: true });
+  if (editingId !== null) {
+    // Update mode — patch the existing override in place
+    const o = overrides.find((x) => x.id === editingId);
+    if (o) {
+      o.name        = name;
+      o.originalUrl = originalUrl;
+      o.overrideUrl = overrideUrl;
+    }
+  } else {
+    // Add mode — create a new override
+    overrides.push({ id: nextId++, name, originalUrl, overrideUrl, enabled: true });
+  }
   saveToStorage();
   render();
   resetForm();
 });
 
-// Also allow Ctrl+Enter / Cmd+Enter inside the form to save quickly
+// Ctrl/Cmd+Enter submits; Escape cancels.
 addForm.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveBtn.click();
   if (e.key === 'Escape') cancelBtn.click();
 });
 
 function resetForm() {
+  editingId = null;
   addForm.hidden = true;
   addBtn.hidden  = false;
   document.getElementById('form-name').value     = '';
   document.getElementById('form-original').value = '';
   document.getElementById('form-override').value = '';
+  formError.textContent  = '';
+  saveBtn.textContent    = 'Save';
+}
+
+// ── Edit an existing override ─────────────────────────────────────────────────
+
+/**
+ * Open the form pre-filled with an existing override's values so the user
+ * can change any field.  Saving will update the override in place.
+ */
+function openEditForm(id) {
+  const o = overrides.find((x) => x.id === id);
+  if (!o) return;
+
+  editingId = id;
+  addBtn.hidden  = true;
+  addForm.hidden = false;
+
+  document.getElementById('form-name').value     = o.name;
+  document.getElementById('form-original').value = o.originalUrl;
+  document.getElementById('form-override').value = o.overrideUrl;
   formError.textContent = '';
+  saveBtn.textContent   = 'Update';
+
+  document.getElementById('form-override').focus();
+  addForm.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ── Pre-load form from a detected URL ─────────────────────────────────────────
+
+/**
+ * Open the add-override form pre-filled with data inferred from a detected URL.
+ * The user only needs to type the Override URL and press Save.
+ */
+function preloadOverride(originalUrl) {
+  addBtn.hidden  = true;
+  addForm.hidden = false;
+
+  document.getElementById('form-name').value     = guessRemoteName(originalUrl);
+  document.getElementById('form-original').value = originalUrl;
+  document.getElementById('form-override').value = '';
+  formError.textContent = '';
+
+  // Focus the one field the user still needs to fill in.
+  const overrideInput = document.getElementById('form-override');
+  overrideInput.focus();
+
+  // Scroll the form into view in case the popup is tall.
+  addForm.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/**
+ * Derive a human-readable remote name from the URL path.
+ * e.g. https://staging.app.com/map/remoteEntry.json  →  "map"
+ *      https://staging.app.com/remoteEntry.json       →  "remote"
+ */
+function guessRemoteName(url) {
+  try {
+    const parts = new URL(url).pathname
+      .split('/')
+      .filter(Boolean)
+      .map((s) => s.toLowerCase());
+
+    const idx = parts.findIndex((p) => p.startsWith('remoteentry'));
+    // Use the segment immediately before remoteEntry.json, if one exists.
+    if (idx > 0) return parts[idx - 1];
+    // Fallback: first path segment (might be the only one).
+    if (parts.length > 0 && !parts[0].startsWith('remoteentry')) return parts[0];
+  } catch {
+    // URL parse failed
+  }
+  return '';
+}
+
+// ── Live updates while the popup is open ──────────────────────────────────────
+// When the content script detects a new remote on the active tab, the
+// background writes to storage. This listener re-renders the detected section
+// without requiring the user to close and reopen the popup.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.detected || currentTabId === null) return;
+  const allDetected = changes.detected.newValue ?? {};
+  detectedUrls = allDetected[currentTabId] ?? [];
+  renderDetected();
+});
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function esc(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function isValidUrl(str) {
-  try {
-    new URL(str);
-    return true;
-  } catch {
-    return false;
-  }
+  try { new URL(str); return true; } catch { return false; }
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
-loadFromStorage().then(render);
+Promise.all([
+  resolveCurrentTab(),
+  loadFromStorage(),
+]).then(async () => {
+  await loadDetected();
+  render();
+});

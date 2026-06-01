@@ -18,16 +18,29 @@
       <span id="active-badge" class="badge badge--inactive">none active</span>
     </header>
 
-    <!-- Override list -->
+    <!-- ── Detected Remotes ─────────────────────────────────────────────── -->
+    <div class="section-header">
+      <span class="section-title">Detected Remotes</span>
+      <span id="detected-count" class="badge badge--inactive">—</span>
+    </div>
+
+    <!-- Populated by popup.js; shows scanning hint / items / empty message -->
+    <div id="detected-list" class="detected-list"></div>
+
+    <!-- ── Overrides ───────────────────────────────────────────────────── -->
+    <div class="section-header section-header--overrides">
+      <span class="section-title">Overrides</span>
+    </div>
+
     <div id="override-list" class="override-list" role="list"></div>
 
-    <!-- Empty state -->
+    <!-- Empty state shown when there are no configured overrides -->
     <div id="empty-state" class="empty-state">
       <p>No overrides configured.</p>
       <p class="empty-hint">Add an override to redirect a remote's<br><code>remoteEntry.json</code> to a local build.</p>
     </div>
 
-    <!-- Add-override section -->
+    <!-- ── Add-override section ────────────────────────────────────────── -->
     <div class="add-section">
 
       <!-- Collapsed: single button -->
