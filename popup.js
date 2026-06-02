@@ -113,11 +113,12 @@ function renderDetected() {
 }
 
 function buildDetectedItemHTML({ url, name }) {
+  const displayUrl = esc(stripRemoteEntry(url));
   return `
     <div class="detected-item">
       <div class="detected-info">
         <span class="detected-name">${esc(name)}</span>
-        <span class="detected-url" title="${esc(url)}">${esc(url)}</span>
+        <span class="detected-url" title="${displayUrl}">${displayUrl}</span>
       </div>
       <button class="btn-use" data-action="use-detected" data-url="${esc(url)}">Override</button>
     </div>
@@ -254,7 +255,7 @@ function openInlineEditForm(id, anchorEl) {
   const o = overrides.find((x) => x.id === id);
   if (!o) return;
   inlineFormState = { mode: 'edit', editId: id };
-  const formEl = buildInlineFormEl(o.overrideUrl);
+  const formEl = buildInlineFormEl(stripRemoteEntry(o.overrideUrl));
   anchorEl.after(formEl);
   formEl.querySelector('.inline-override-input').focus();
 }
@@ -265,7 +266,7 @@ function buildInlineFormEl(existingValue) {
   div.innerHTML = `
     <input class="form-input inline-override-input" type="url"
            value="${esc(existingValue)}"
-           placeholder="http://localhost:4301/remoteEntry.json" autocomplete="off" />
+           placeholder="http://localhost:4304/" autocomplete="off" />
     <p class="form-error inline-form-error" aria-live="polite"></p>
     <div class="form-actions">
       <button class="btn btn--primary inline-save-btn">Save &amp; Reload</button>
@@ -282,10 +283,11 @@ function buildInlineFormEl(existingValue) {
 }
 
 function saveInlineForm(formEl) {
-  const overrideUrl = formEl.querySelector('.inline-override-input').value.trim();
+  const raw         = formEl.querySelector('.inline-override-input').value.trim();
+  const overrideUrl = normalizeOverrideUrl(raw);
   const errorEl     = formEl.querySelector('.inline-form-error');
 
-  if (!overrideUrl) { errorEl.textContent = 'Override URL is required.'; return; }
+  if (!raw) { errorEl.textContent = 'Override URL is required.'; return; }
   if (!isValidUrl(overrideUrl)) { errorEl.textContent = 'Not a valid URL.'; return; }
 
   if (inlineFormState.mode === 'add') {
@@ -340,6 +342,22 @@ chrome.storage.onChanged.addListener((changes, area) => {
     renderDetected();
   });
 });
+
+// ── URL display / input helpers ───────────────────────────────────────────────
+
+/** Strip trailing remoteEntry.json for display; leave the rest unchanged. */
+function stripRemoteEntry(url) {
+  return url.replace(/remoteEntry\.json$/i, '');
+}
+
+/**
+ * Ensure a user-typed base URL ends with remoteEntry.json.
+ * Accepts both "http://host/" and "http://host/path/remoteEntry.json".
+ */
+function normalizeOverrideUrl(url) {
+  if (/\/remoteEntry\.json$/i.test(url)) return url;
+  return url.replace(/\/$/, '') + '/remoteEntry.json';
+}
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 function esc(str) {
