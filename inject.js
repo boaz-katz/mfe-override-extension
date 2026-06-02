@@ -28,9 +28,6 @@
     new Promise((res) =>
       setTimeout(() => {
         if (overrides === null) {
-          console.warn(
-            "[MFE Override] inject: overrides not received within 3 s — proceeding without redirect",
-          );
           overrides = [];
         }
         res();
@@ -42,22 +39,11 @@
   document.addEventListener("__MFEOverride_rules__", (e) => {
     overrides = Array.isArray(e.detail) ? e.detail : [];
     resolveReady();
-    console.log(
-      "[MFE Override] inject: received overrides —",
-      overrides.length,
-      "enabled rule(s)",
-      overrides,
-    );
   });
 
   // Live updates when the user edits overrides while the page is open
   document.addEventListener("__MFEOverride_rulesUpdate__", (e) => {
     overrides = Array.isArray(e.detail) ? e.detail : [];
-    console.log(
-      "[MFE Override] inject: overrides updated —",
-      overrides.length,
-      "enabled rule(s)",
-    );
   });
 
   // ── remoteEntry.json scope mirroring ─────────────────────────────────────────
@@ -95,19 +81,9 @@
         }
       }
 
-      if (!Object.keys(extra).length) {
-        console.log(
-          "[MFE Override] inject: mirrorRemoteEntryScopes: no scopes to mirror",
-        );
-
-        return response;
-      }
+      if (!Object.keys(extra).length) return response;
 
       const patched = { ...json, scopes: { ...json.scopes, ...extra } };
-      console.log(
-        "[MFE Override] inject: mirrored remoteEntry.json scopes —",
-        Object.keys(extra),
-      );
       return new Response(JSON.stringify(patched), {
         status: response.status,
         statusText: response.statusText,
@@ -165,10 +141,6 @@
           if (Object.keys(extra).length) {
             json.scopes = { ...json.scopes, ...extra };
             node.textContent = JSON.stringify(json);
-            console.log(
-              "[MFE Override] inject: patched importmap-shim — added scopes for",
-              Object.keys(extra),
-            );
           }
         }
       } catch (_) {}
@@ -197,8 +169,6 @@
       if (url.startsWith(originalBase)) {
         const redirected =
           getBaseUrl(o.overrideUrl) + url.slice(originalBase.length);
-        console.log(`[MFE Override] inject: redirect  ${url}`);
-        console.log(`[MFE Override] inject:        →  ${redirected}`);
         return redirected;
       }
     }
@@ -216,7 +186,7 @@
     await overridesReady;
 
     const urlStr = input instanceof Request ? input.url : String(input);
-    console.log("[MFE Override] inject: fetch intercepted —", urlStr);
+
 
     const redirected = applyOverride(urlStr);
     if (redirected !== null) {
@@ -251,5 +221,4 @@
     }
   };
 
-  console.log("[MFE Override] inject: window.fetch and XMLHttpRequest patched");
 })();

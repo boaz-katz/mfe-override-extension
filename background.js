@@ -55,32 +55,24 @@ let applyRulesInFlight = false;
 
 async function applyRules() {
   if (applyRulesInFlight) {
-    console.log('[MFE Override] applyRules() already in progress — skipping concurrent call');
     return;
   }
   applyRulesInFlight = true;
-  console.log('[MFE Override] applyRules() called');
 
   try {
     const { overrides = [] } = await chrome.storage.local.get('overrides');
-    console.log(`[MFE Override] Overrides loaded from storage (${overrides.length} total):`, overrides);
 
     // ── Step 1: get every existing dynamic rule ID ────────────────────────
     const existing = await chrome.declarativeNetRequest.getDynamicRules();
     const removeRuleIds = existing.map((r) => r.id);
-    console.log(`[MFE Override] Step 1 — existing rule IDs: [${removeRuleIds.join(', ') || 'none'}]`);
 
     // ── Step 2: remove them all and WAIT for completion ───────────────────
     if (removeRuleIds.length > 0) {
       await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds });
-      console.log(`[MFE Override] Step 2 — removed ${removeRuleIds.length} rule(s)`);
-    } else {
-      console.log('[MFE Override] Step 2 — no existing rules to remove');
     }
 
     // ── Step 3: build and add the new rules ───────────────────────────────
     const enabledOverrides = overrides.filter((o) => o.enabled);
-    console.log(`[MFE Override] Enabled overrides: ${enabledOverrides.length} of ${overrides.length}`);
 
     const addRules = enabledOverrides.map((o) => {
       const originalBase = getBaseUrl(o.originalUrl);
@@ -91,7 +83,7 @@ async function applyRules() {
       // A reverse rule would create an infinite redirect loop, so we rely on
       // inject.js (fetch/XHR patch) for the actual redirect, and Native Federation
       // infers the chunk base URL from where remoteEntry.json was served.
-      const forwardRule = {
+      return {
         id: o.id,
         priority: 1,
         action: {
@@ -103,21 +95,10 @@ async function applyRules() {
           resourceTypes: RESOURCE_TYPES,
         },
       };
-
-      console.log(`[MFE Override] Rule for "${o.name}":`, {
-        id: forwardRule.id,
-        regexFilter: forwardRule.condition.regexFilter,
-        regexSubstitution: forwardRule.action.redirect.regexSubstitution,
-      });
-
-      return forwardRule;
     });
 
     if (addRules.length > 0) {
       await chrome.declarativeNetRequest.updateDynamicRules({ addRules });
-      console.log(`[MFE Override] Step 3 — added ${addRules.length} rule(s)`);
-    } else {
-      console.log('[MFE Override] Step 3 — no enabled overrides, nothing to add');
     }
 
     updateBadge(enabledOverrides.length);
@@ -204,7 +185,7 @@ async function addDetectedRemote(tabId, url) {
   if (existing.includes(url)) return; // already known
   detected[tabId] = [...existing, url];
   await chrome.storage.local.set({ detected });
-  console.log(`[MFE Override] Detected remote: ${url} (tab ${tabId})`);
+;
 }
 
 /** Remove all detected URLs for a tab (called on navigation or tab close). */
@@ -232,7 +213,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // via PerformanceObserver.  sender.tab.id tells us which tab it came from.
     const tabId = sender.tab?.id;
     if (tabId != null && message.url) {
-      console.log(`[MFE Override] DETECTED_REMOTE message received — tab ${tabId}: ${message.url}`);
       addDetectedRemote(tabId, message.url).catch((err) => {
         console.error('[MFE Override] addDetectedRemote failed:', err);
       });
@@ -259,12 +239,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.overrides) {
-    console.log('[MFE Override] Storage changed — re-applying rules');
     applyRules();
   }
 });
 
 // ── Startup ───────────────────────────────────────────────────────────────────
 
-console.log('[MFE Override] Service worker started');
 applyRules();

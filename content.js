@@ -19,7 +19,6 @@
   function dispatchRules(overrides, eventName) {
     const enabled = (overrides || []).filter((o) => o.enabled);
     document.dispatchEvent(new CustomEvent(eventName, { detail: enabled }));
-    console.log(`[MFE Override] content: dispatched "${eventName}" — ${enabled.length} enabled rule(s)`);
   }
 
   // Initial load — dispatch as soon as storage resolves (typically < 1 ms).
@@ -61,7 +60,6 @@
     const url = canonicalUrl(raw);
     if (reported.has(url)) return;
     reported.add(url);
-    console.log('[MFE Override] content: detected remoteEntry —', url);
     try {
       chrome.runtime.sendMessage({ type: 'DETECTED_REMOTE', url }).catch(() => {
         // Background service worker may still be waking up; suppress the error.
@@ -91,8 +89,6 @@
     // buffered: true delivers entries already in the buffer at observe() time,
     // catching fetches that completed before this script was injected.
     observer.observe({ type: 'resource', buffered: true });
-    console.log('[MFE Override] content: PerformanceObserver attached');
   } catch (err) {
-    console.warn('[MFE Override] content: PerformanceObserver unavailable —', err);
   }
 })();
