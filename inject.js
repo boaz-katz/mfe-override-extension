@@ -8,7 +8,7 @@
  * (the isolated-world companion script) via a DOM CustomEvent.
  */
 (function () {
-  'use strict';
+  "use strict";
 
   // ── Overrides state ───────────────────────────────────────────────────────────
 
@@ -22,87 +22,167 @@
   // timeout (prevents the page hanging if something goes wrong in content.js).
   let resolveReady;
   const overridesReady = Promise.race([
-    new Promise((res) => { resolveReady = res; }),
-    new Promise((res) => setTimeout(() => {
-      if (overrides === null) {
-        console.warn('[MFE Override] inject: overrides not received within 3 s — proceeding without redirect');
-        overrides = [];
-      }
-      res();
-    }, 3000)),
+    new Promise((res) => {
+      resolveReady = res;
+    }),
+    new Promise((res) =>
+      setTimeout(() => {
+        if (overrides === null) {
+          console.warn(
+            "[MFE Override] inject: overrides not received within 3 s — proceeding without redirect",
+          );
+          overrides = [];
+        }
+        res();
+      }, 3000),
+    ),
   ]);
 
   // Initial delivery from content.js
-  document.addEventListener('__MFEOverride_rules__', (e) => {
+  document.addEventListener("__MFEOverride_rules__", (e) => {
     overrides = Array.isArray(e.detail) ? e.detail : [];
     resolveReady();
-    console.log('[MFE Override] inject: received overrides —', overrides.length, 'enabled rule(s)', overrides);
-    setupImportMapMirror(overrides);
+    console.log(
+      "[MFE Override] inject: received overrides —",
+      overrides.length,
+      "enabled rule(s)",
+      overrides,
+    );
   });
 
   // Live updates when the user edits overrides while the page is open
-  document.addEventListener('__MFEOverride_rulesUpdate__', (e) => {
+  document.addEventListener("__MFEOverride_rulesUpdate__", (e) => {
     overrides = Array.isArray(e.detail) ? e.detail : [];
-    console.log('[MFE Override] inject: overrides updated —', overrides.length, 'enabled rule(s)');
+    console.log(
+      "[MFE Override] inject: overrides updated —",
+      overrides.length,
+      "enabled rule(s)",
+    );
   });
 
-  // ── Import map scope mirroring ────────────────────────────────────────────────
-  // Problem: inject.js redirects fetch('localhost:4301/Mount.js') by changing the
-  // URL to 'localhost:4304/Mount.js'.  The browser records the module URL as
-  // localhost:4304 (response.url).  But NF's import map has shared-package scopes
-  // keyed to localhost:4301.  Modules at localhost:4304 can't see that scope, so
-  // bare specifier imports inside them fail with "Unable to resolve specifier".
+  // ── remoteEntry.json scope mirroring ─────────────────────────────────────────
+  // Problem: inject.js redirects fetch('localhost:4301/Mount.js') to
+  // 'localhost:4304/Mount.js'.  The browser records the module URL as
+  // localhost:4304.  But NF's import map has shared-package scopes keyed to
+  // localhost:4301.  Modules at localhost:4304 can't see that scope, so bare
+  // specifier imports inside them fail with "Unable to resolve specifier".
   //
-  // Fix: patch importShim.addImportMap so that whenever NF adds a scope for the
-  // original base URL, we simultaneously add the same entries under the override
-  // base URL.  This makes every shared package resolvable from both hosts.
+  // Fix: when a redirected fetch is for remoteEntry.json, intercept the JSON
+  // response and add a mirrored scope entry for the original base URL alongside
+  // the override base URL.  NF then registers both scopes in the import map, so
+  // packages are resolvable from modules at either host — automatically, for
+  // every package the remote declares, with no hardcoding required.
 
-  function setupImportMapMirror(activeOverrides) {
-    if (!activeOverrides || !activeOverrides.length) return;
+  async function mirrorRemoteEntryScopes(response, originalUrl, redirectedUrl) {
+    try {
+      const json = await response.clone().json();
+      if (!json || !json.scopes) return response;
 
-    function patchShim(shim) {
-      if (!shim || shim.__mfeOverridePatchedImportMap) return;
-      shim.__mfeOverridePatchedImportMap = true;
+      const originalBase = getBaseUrl(originalUrl);
+      const overrideBase = getBaseUrl(redirectedUrl);
+      const extra = {};
 
-      const orig = shim.addImportMap.bind(shim);
-      shim.addImportMap = function mfeAddImportMap(map) {
-        orig(map);
-        if (!map || !map.scopes) return;
-        const extra = {};
-        for (const o of activeOverrides) {
-          const src = getBaseUrl(o.originalUrl);
-          const dst = getBaseUrl(o.overrideUrl);
-          if (map.scopes[src]) extra[dst] = { ...map.scopes[src] };
+      for (const [scopeKey, scopeEntries] of Object.entries(json.scopes)) {
+        // Mirror override-base scopes → original-base scopes
+        if (scopeKey.startsWith(overrideBase)) {
+          const mirrorKey = originalBase + scopeKey.slice(overrideBase.length);
+          if (!json.scopes[mirrorKey]) extra[mirrorKey] = scopeEntries;
         }
-        if (Object.keys(extra).length) orig({ scopes: extra });
-      };
-      console.log('[MFE Override] inject: importShim.addImportMap patched for scope mirroring');
-    }
-
-    if (window.importShim) {
-      patchShim(window.importShim);
-    } else {
-      // importShim not yet set — intercept the assignment
-      try {
-        Object.defineProperty(window, 'importShim', {
-          configurable: true,
-          set(v) {
-            // Restore as a normal writable property, then patch
-            Object.defineProperty(window, 'importShim', { value: v, writable: true, configurable: true });
-            patchShim(v);
-          },
-        });
-      } catch (_) {
-        // defineProperty not supported in this context — skip mirroring
+        // Mirror original-base scopes → override-base scopes
+        if (scopeKey.startsWith(originalBase)) {
+          const mirrorKey = overrideBase + scopeKey.slice(originalBase.length);
+          if (!json.scopes[mirrorKey]) extra[mirrorKey] = scopeEntries;
+        }
       }
+
+      if (!Object.keys(extra).length) {
+        console.log(
+          "[MFE Override] inject: mirrorRemoteEntryScopes: no scopes to mirror",
+        );
+
+        return response;
+      }
+
+      const patched = { ...json, scopes: { ...json.scopes, ...extra } };
+      console.log(
+        "[MFE Override] inject: mirrored remoteEntry.json scopes —",
+        Object.keys(extra),
+      );
+      return new Response(JSON.stringify(patched), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    } catch (_) {
+      return response;
     }
   }
+
+  // ── importmap-shim DOM injection interceptor ─────────────────────────────────
+  // NF does NOT call importShim.addImportMap().  Instead it appends import maps by
+  // inserting <script type="importmap-shim"> elements into document.head:
+  //
+  //   document.head.appendChild(Object.assign(document.createElement("script"), {
+  //     type: "importmap-shim",
+  //     textContent: JSON.stringify(importMap)
+  //   }));
+  //
+  // We intercept every such insertion.  For each scope entry added by any remote,
+  // we mirror all bare-specifier entries into the active override URL's scope so
+  // that modules loaded from the override host can resolve every shared package —
+  // regardless of which remote originally provided the implementation.
+  //
+  // Set up eagerly at inject.js startup (before any page scripts run) so the patch
+  // is in place before NF calls appendImportMap for any remote.
+
+  const _origAppendChild = Element.prototype.appendChild;
+  Element.prototype.appendChild = function mfeAppendChild(node) {
+    if (
+      overrides !== null &&
+      overrides.length > 0 &&
+      node instanceof HTMLElement &&
+      node.tagName === "SCRIPT" &&
+      String(node.type) === "importmap-shim"
+    ) {
+      try {
+        const json = JSON.parse(String(node.textContent));
+        if (json && json.scopes) {
+          const extra = {};
+          for (const [scopeKey, scopeEntries] of Object.entries(json.scopes)) {
+            for (const o of overrides) {
+              const overrideBase = getBaseUrl(o.overrideUrl);
+              if (scopeKey === overrideBase) continue;
+              for (const [specifier, url] of Object.entries(scopeEntries)) {
+                if (!specifier.startsWith(".")) {
+                  if (!extra[overrideBase]) extra[overrideBase] = {};
+                  if (!extra[overrideBase][specifier]) {
+                    extra[overrideBase][specifier] = url;
+                  }
+                }
+              }
+            }
+          }
+          if (Object.keys(extra).length) {
+            json.scopes = { ...json.scopes, ...extra };
+            node.textContent = JSON.stringify(json);
+            console.log(
+              "[MFE Override] inject: patched importmap-shim — added scopes for",
+              Object.keys(extra),
+            );
+          }
+        }
+      } catch (_) {}
+    }
+    return _origAppendChild.call(this, node);
+  };
+
+  function setupImportMapMirror() {} // mirroring now handled via appendChild patch above
 
   // ── URL helpers ───────────────────────────────────────────────────────────────
 
   function getBaseUrl(url) {
-    const i = url.lastIndexOf('/');
-    return i >= 0 ? url.slice(0, i + 1) : url + '/';
+    const i = url.lastIndexOf("/");
+    return i >= 0 ? url.slice(0, i + 1) : url + "/";
   }
 
   /**
@@ -115,7 +195,8 @@
       if (!o.enabled) continue;
       const originalBase = getBaseUrl(o.originalUrl);
       if (url.startsWith(originalBase)) {
-        const redirected = getBaseUrl(o.overrideUrl) + url.slice(originalBase.length);
+        const redirected =
+          getBaseUrl(o.overrideUrl) + url.slice(originalBase.length);
         console.log(`[MFE Override] inject: redirect  ${url}`);
         console.log(`[MFE Override] inject:        →  ${redirected}`);
         return redirected;
@@ -135,12 +216,23 @@
     await overridesReady;
 
     const urlStr = input instanceof Request ? input.url : String(input);
-    console.log('[MFE Override] inject: fetch intercepted —', urlStr);
+    console.log("[MFE Override] inject: fetch intercepted —", urlStr);
 
     const redirected = applyOverride(urlStr);
     if (redirected !== null) {
       // Preserve all request options when the input was a Request object.
-      input = input instanceof Request ? new Request(redirected, input) : redirected;
+      const newInput =
+        input instanceof Request ? new Request(redirected, input) : redirected;
+      const response = await origFetch(newInput, init);
+
+      // When redirecting a remoteEntry.json, mirror its scopes so that packages
+      // declared by the remote are resolvable from modules at either host URL.
+
+      if (urlStr.includes("remoteEntry.json")) {
+        return mirrorRemoteEntryScopes(response, urlStr, redirected);
+      }
+
+      return response;
     }
 
     return origFetch(input, init);
@@ -159,5 +251,5 @@
     }
   };
 
-  console.log('[MFE Override] inject: window.fetch and XMLHttpRequest patched');
+  console.log("[MFE Override] inject: window.fetch and XMLHttpRequest patched");
 })();

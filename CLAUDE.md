@@ -76,6 +76,7 @@ Detected list is cleared on navigation (`chrome.tabs.onUpdated` status=`loading`
 - `inject.js` only patches `fetch()` and `XMLHttpRequest`. Dynamic `import()` and `<script>` tag injection bypass it — those are handled by `declarativeNetRequest`.
 - `declarativeNetRequest` cannot redirect HTTPS → HTTP in all cases (Chrome security policy) — that path is covered by `inject.js`.
 - The two layers must not conflict: do NOT add reverse `declarativeNetRequest` rules or reverse checks in `inject.js`.
+- **Import map scope mismatch**: inject.js redirects fetch URLs (e.g. `localhost:4301/Mount.js` → `localhost:4304/Mount.js`). The browser records the module as coming from `localhost:4304`. NF's import map has shared-package scopes keyed to `localhost:4301`. Packages declared as `singleton: true` that are only used by the override remote (not by the shell) will fail with "Unable to resolve specifier" because the scope doesn't match. **Fix**: only declare a package as shared/singleton in `federation-share.js` if the shell itself imports it. Packages used only by one remote should be bundled into that remote (not shared).
 
 ## Loading the extension
 
