@@ -104,7 +104,7 @@ function renderDetected() {
   }
 
   const unmatched = detectedRemotes.filter(
-    (r) => !overrides.some((o) => o.originalUrl === r.url)
+    (r) => !overrides.some((o) => o.originalUrl === r.url || o.overrideUrl === r.url)
   );
 
   countBadge.textContent = `${unmatched.length} found`;
@@ -190,18 +190,27 @@ function renderBadge() {
 }
 
 // ── Override actions ──────────────────────────────────────────────────────────
+function reloadAndClose() {
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    chrome.tabs.reload(tab.id);
+    window.close();
+  });
+}
+
 function toggleOverride(id) {
   const o = overrides.find((x) => x.id === id);
   if (!o) return;
   o.enabled = !o.enabled;
   saveToStorage();
   render();
+  reloadAndClose();
 }
 
 function removeOverride(id) {
   overrides = overrides.filter((x) => x.id !== id);
   saveToStorage();
   render();
+  reloadAndClose();
 }
 
 // ── Event delegation on the override list ─────────────────────────────────────
@@ -292,9 +301,7 @@ function saveInlineForm(formEl) {
   saveToStorage();
   closeInlineForm();
   render();
-  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    chrome.tabs.reload(tab.id);
-  });
+  reloadAndClose();
 }
 
 /**
