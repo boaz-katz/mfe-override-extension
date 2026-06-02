@@ -19,6 +19,24 @@ async function loadDetected() {
   }
   const { detected = {} } = await chrome.storage.local.get('detected');
   detectedUrls = detected[currentTabId] ?? [];
+
+  // If storage is empty the background service worker may have been sleeping
+  // when the page loaded and the DETECTED_REMOTE messages were dropped.
+  // Ask the content script directly — it keeps its own in-memory reported set.
+  if (detectedUrls.length === 0) {
+    try {
+      const resp = await chrome.tabs.sendMessage(currentTabId, { type: 'REQUEST_DETECTED' });
+      if (resp?.urls?.length) {
+        detectedUrls = resp.urls;
+        // Persist so live-update via storage.onChanged works going forward.
+        const { detected: d = {} } = await chrome.storage.local.get('detected');
+        d[currentTabId] = detectedUrls;
+        chrome.storage.local.set({ detected: d });
+      }
+    } catch {
+      // Content script not present on this page (e.g. chrome:// URL) — ignore.
+    }
+  }
 }
 
 async function saveToStorage() {

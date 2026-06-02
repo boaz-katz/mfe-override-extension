@@ -71,6 +71,15 @@
     }
   }
 
+  // Popup can ask the content script directly for its in-memory detected list.
+  // This is the fallback when the background service worker was sleeping during
+  // detection and the DETECTED_REMOTE messages were silently dropped.
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message.type === 'REQUEST_DETECTED') {
+      sendResponse({ urls: [...reported] });
+    }
+  });
+
   try {
     const observer = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
