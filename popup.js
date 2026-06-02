@@ -1,9 +1,9 @@
 // ── State ─────────────────────────────────────────────────────────────────────
-let overrides    = [];
-let nextId       = 1;
-let detectedUrls = [];   // detected remoteEntry URLs for the current tab
-let currentTabId = null;
-let editingId    = null; // ID of the override currently being edited (null = add mode)
+let overrides       = [];
+let nextId          = 1;
+let detectedUrls    = [];   // detected remoteEntry URLs for the current tab
+let detectedRemotes = [];   // { url, name }[] — name fetched from each remoteEntry.json
+let currentTabId    = null;
 
 // ── Storage helpers ───────────────────────────────────────────────────────────
 async function loadFromStorage() {
@@ -15,6 +15,7 @@ async function loadFromStorage() {
 async function loadDetected() {
   if (currentTabId === null) {
     detectedUrls = [];
+    detectedRemotes = [];
     return;
   }
   const { detected = {} } = await chrome.storage.local.get('detected');
@@ -37,7 +38,23 @@ async function loadDetected() {
       // Content script not present on this page (e.g. chrome:// URL) — ignore.
     }
   }
+
+  detectedRemotes = await resolveRemoteNames(detectedUrls);
 }
+
+/** Fetch each remoteEntry.json and read the federation `name` field. */
+async function resolveRemoteNames(urls) {
+  return Promise.all(urls.map(async (url) => {
+    try {
+      const resp = await fetch(url);
+      const json = await resp.json();
+      return { url, name: json.name || guessRemoteName(url) };
+    } catch {
+      return { url, name: guessRemoteName(url) };
+    }
+  }));
+}
+
 
 async function saveToStorage() {
   await chrome.storage.local.set({ overrides, nextId });
@@ -86,12 +103,12 @@ function renderDetected() {
     return;
   }
 
-  countBadge.textContent = `${detectedUrls.length} found`;
+  countBadge.textContent = `${detectedRemotes.length} found`;
   countBadge.className   = 'badge badge--active';
-  list.innerHTML = detectedUrls.map((url) => buildDetectedItemHTML(url)).join('');
+  list.innerHTML = detectedRemotes.map((r) => buildDetectedItemHTML(r)).join('');
 }
 
-function buildDetectedItemHTML(url) {
+function buildDetectedItemHTML({ url, name }) {
   const alreadyConfigured = overrides.some((o) => o.originalUrl === url);
   const action = alreadyConfigured
     ? `<span class="badge badge--configured">Configured</span>`
@@ -99,7 +116,10 @@ function buildDetectedItemHTML(url) {
 
   return `
     <div class="detected-item">
-      <span class="detected-url" title="${esc(url)}">${esc(url)}</span>
+      <div class="detected-info">
+        <span class="detected-name">${esc(name)}</span>
+        <span class="detected-url" title="${esc(url)}">${esc(url)}</span>
+      </div>
       ${action}
     </div>
   `;
@@ -108,7 +128,7 @@ function buildDetectedItemHTML(url) {
 // Event delegation for the detected list's "Override" buttons.
 document.getElementById('detected-list').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-action="use-detected"]');
-  if (btn) preloadOverride(btn.dataset.url);
+  if (btn) openInlineAddForm(btn.dataset.url, btn.closest('.detected-item'));
 });
 
 // ── Override section ──────────────────────────────────────────────────────────
@@ -198,121 +218,81 @@ document.getElementById('override-list').addEventListener('click', (e) => {
   if (!item) return;
   const id = Number(item.dataset.id);
   if (e.target.dataset.action === 'remove') removeOverride(id);
-  if (e.target.dataset.action === 'edit')   openEditForm(id);
+  if (e.target.dataset.action === 'edit')   openInlineEditForm(id, item);
 });
 
-// ── Add-form logic ────────────────────────────────────────────────────────────
-const addBtn    = document.getElementById('add-btn');
-const addForm   = document.getElementById('add-form');
-const saveBtn   = document.getElementById('save-btn');
-const cancelBtn = document.getElementById('cancel-btn');
-const formError = document.getElementById('form-error');
+// ── Inline form ───────────────────────────────────────────────────────────────
+// One inline form can be open at a time.  It is inserted directly after the
+// item that triggered it (detected-item or override-item) and removed on
+// save or cancel.
 
-addBtn.addEventListener('click', () => {
-  addBtn.hidden  = true;
-  addForm.hidden = false;
-  document.getElementById('form-name').focus();
-});
+let inlineFormState = null; // { mode: 'add'|'edit', originalUrl?, editId? }
 
-cancelBtn.addEventListener('click', resetForm);
-
-saveBtn.addEventListener('click', () => {
-  const name        = document.getElementById('form-name').value.trim();
-  const originalUrl = document.getElementById('form-original').value.trim();
-  const overrideUrl = document.getElementById('form-override').value.trim();
-
-  if (!name || !originalUrl || !overrideUrl) {
-    formError.textContent = 'All fields are required.';
-    return;
-  }
-  if (!isValidUrl(originalUrl)) {
-    formError.textContent = 'Original URL is not a valid URL.';
-    return;
-  }
-  if (!isValidUrl(overrideUrl)) {
-    formError.textContent = 'Override URL is not a valid URL.';
-    return;
-  }
-
-  if (editingId !== null) {
-    // Update mode — patch the existing override in place
-    const o = overrides.find((x) => x.id === editingId);
-    if (o) {
-      o.name        = name;
-      o.originalUrl = originalUrl;
-      o.overrideUrl = overrideUrl;
-    }
-  } else {
-    // Add mode — create a new override
-    overrides.push({ id: nextId++, name, originalUrl, overrideUrl, enabled: true });
-  }
-  saveToStorage();
-  render();
-  resetForm();
-});
-
-// Ctrl/Cmd+Enter submits; Escape cancels.
-addForm.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveBtn.click();
-  if (e.key === 'Escape') cancelBtn.click();
-});
-
-function resetForm() {
-  editingId = null;
-  addForm.hidden = true;
-  addBtn.hidden  = false;
-  document.getElementById('form-name').value     = '';
-  document.getElementById('form-original').value = '';
-  document.getElementById('form-override').value = '';
-  formError.textContent  = '';
-  saveBtn.textContent    = 'Save';
+function closeInlineForm() {
+  document.querySelector('.inline-form')?.remove();
+  inlineFormState = null;
 }
 
-// ── Edit an existing override ─────────────────────────────────────────────────
+function openInlineAddForm(originalUrl, anchorEl) {
+  closeInlineForm();
+  inlineFormState = { mode: 'add', originalUrl };
+  const formEl = buildInlineFormEl('');
+  anchorEl.after(formEl);
+  formEl.querySelector('.inline-override-input').focus();
+}
 
-/**
- * Open the form pre-filled with an existing override's values so the user
- * can change any field.  Saving will update the override in place.
- */
-function openEditForm(id) {
+function openInlineEditForm(id, anchorEl) {
+  closeInlineForm();
   const o = overrides.find((x) => x.id === id);
   if (!o) return;
-
-  editingId = id;
-  addBtn.hidden  = true;
-  addForm.hidden = false;
-
-  document.getElementById('form-name').value     = o.name;
-  document.getElementById('form-original').value = o.originalUrl;
-  document.getElementById('form-override').value = o.overrideUrl;
-  formError.textContent = '';
-  saveBtn.textContent   = 'Update';
-
-  document.getElementById('form-override').focus();
-  addForm.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  inlineFormState = { mode: 'edit', editId: id };
+  const formEl = buildInlineFormEl(o.overrideUrl);
+  anchorEl.after(formEl);
+  formEl.querySelector('.inline-override-input').focus();
 }
 
-// ── Pre-load form from a detected URL ─────────────────────────────────────────
+function buildInlineFormEl(existingValue) {
+  const div = document.createElement('div');
+  div.className = 'inline-form';
+  div.innerHTML = `
+    <input class="form-input inline-override-input" type="url"
+           value="${esc(existingValue)}"
+           placeholder="http://localhost:4301/remoteEntry.json" autocomplete="off" />
+    <p class="form-error inline-form-error" aria-live="polite"></p>
+    <div class="form-actions">
+      <button class="btn btn--primary inline-save-btn">Save</button>
+      <button class="btn btn--ghost inline-cancel-btn">Cancel</button>
+    </div>
+  `;
+  div.querySelector('.inline-cancel-btn').addEventListener('click', closeInlineForm);
+  div.querySelector('.inline-save-btn').addEventListener('click', () => saveInlineForm(div));
+  div.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveInlineForm(div);
+    if (e.key === 'Escape') closeInlineForm();
+  });
+  return div;
+}
 
-/**
- * Open the add-override form pre-filled with data inferred from a detected URL.
- * The user only needs to type the Override URL and press Save.
- */
-function preloadOverride(originalUrl) {
-  addBtn.hidden  = true;
-  addForm.hidden = false;
+function saveInlineForm(formEl) {
+  const overrideUrl = formEl.querySelector('.inline-override-input').value.trim();
+  const errorEl     = formEl.querySelector('.inline-form-error');
 
-  document.getElementById('form-name').value     = guessRemoteName(originalUrl);
-  document.getElementById('form-original').value = originalUrl;
-  document.getElementById('form-override').value = '';
-  formError.textContent = '';
+  if (!overrideUrl) { errorEl.textContent = 'Override URL is required.'; return; }
+  if (!isValidUrl(overrideUrl)) { errorEl.textContent = 'Not a valid URL.'; return; }
 
-  // Focus the one field the user still needs to fill in.
-  const overrideInput = document.getElementById('form-override');
-  overrideInput.focus();
+  if (inlineFormState.mode === 'add') {
+    const { originalUrl } = inlineFormState;
+    const name = detectedRemotes.find((r) => r.url === originalUrl)?.name
+                 ?? guessRemoteName(originalUrl);
+    overrides.push({ id: nextId++, name, originalUrl, overrideUrl, enabled: true });
+  } else {
+    const o = overrides.find((x) => x.id === inlineFormState.editId);
+    if (o) o.overrideUrl = overrideUrl;
+  }
 
-  // Scroll the form into view in case the popup is tall.
-  addForm.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  saveToStorage();
+  closeInlineForm();
+  render();
 }
 
 /**
@@ -346,7 +326,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes.detected || currentTabId === null) return;
   const allDetected = changes.detected.newValue ?? {};
   detectedUrls = allDetected[currentTabId] ?? [];
-  renderDetected();
+  resolveRemoteNames(detectedUrls).then((remotes) => {
+    detectedRemotes = remotes;
+    renderDetected();
+  });
 });
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

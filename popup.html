@@ -40,37 +40,6 @@
       <p class="empty-hint">Add an override to redirect a remote's<br><code>remoteEntry.json</code> to a local build.</p>
     </div>
 
-    <!-- ── Add-override section ────────────────────────────────────────── -->
-    <div class="add-section">
-
-      <!-- Collapsed: single button -->
-      <button id="add-btn" class="btn btn--primary btn--full">+ Add Override</button>
-
-      <!-- Expanded: inline form (hidden by default) -->
-      <div id="add-form" class="add-form" hidden>
-        <div class="form-group">
-          <label class="form-label" for="form-name">Remote name</label>
-          <input id="form-name" class="form-input" type="text"
-                 placeholder="e.g. map, sidebar, login" autocomplete="off" />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="form-original">Original URL</label>
-          <input id="form-original" class="form-input" type="url"
-                 placeholder="https://staging.myapp.com/map/remoteEntry.json" autocomplete="off" />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="form-override">Override URL</label>
-          <input id="form-override" class="form-input" type="url"
-                 placeholder="http://localhost:4301/remoteEntry.json" autocomplete="off" />
-        </div>
-        <p id="form-error" class="form-error" aria-live="polite"></p>
-        <div class="form-actions">
-          <button id="save-btn" class="btn btn--primary">Save</button>
-          <button id="cancel-btn" class="btn btn--ghost">Cancel</button>
-        </div>
-      </div>
-
-    </div>
   </div>
 
   <script src="popup.js"></script>
