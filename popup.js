@@ -103,24 +103,23 @@ function renderDetected() {
     return;
   }
 
-  countBadge.textContent = `${detectedRemotes.length} found`;
-  countBadge.className   = 'badge badge--active';
-  list.innerHTML = detectedRemotes.map((r) => buildDetectedItemHTML(r)).join('');
+  const unmatched = detectedRemotes.filter(
+    (r) => !overrides.some((o) => o.originalUrl === r.url)
+  );
+
+  countBadge.textContent = `${unmatched.length} found`;
+  countBadge.className   = unmatched.length > 0 ? 'badge badge--active' : 'badge badge--inactive';
+  list.innerHTML = unmatched.map((r) => buildDetectedItemHTML(r)).join('');
 }
 
 function buildDetectedItemHTML({ url, name }) {
-  const alreadyConfigured = overrides.some((o) => o.originalUrl === url);
-  const action = alreadyConfigured
-    ? `<span class="badge badge--configured">Configured</span>`
-    : `<button class="btn-use" data-action="use-detected" data-url="${esc(url)}">Override</button>`;
-
   return `
     <div class="detected-item">
       <div class="detected-info">
         <span class="detected-name">${esc(name)}</span>
         <span class="detected-url" title="${esc(url)}">${esc(url)}</span>
       </div>
-      ${action}
+      <button class="btn-use" data-action="use-detected" data-url="${esc(url)}">Override</button>
     </div>
   `;
 }
