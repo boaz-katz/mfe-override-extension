@@ -259,7 +259,7 @@ function buildInlineFormEl(existingValue) {
            placeholder="http://localhost:4301/remoteEntry.json" autocomplete="off" />
     <p class="form-error inline-form-error" aria-live="polite"></p>
     <div class="form-actions">
-      <button class="btn btn--primary inline-save-btn">Save</button>
+      <button class="btn btn--primary inline-save-btn">Save &amp; Reload</button>
       <button class="btn btn--ghost inline-cancel-btn">Cancel</button>
     </div>
   `;
@@ -292,6 +292,9 @@ function saveInlineForm(formEl) {
   saveToStorage();
   closeInlineForm();
   render();
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    chrome.tabs.reload(tab.id);
+  });
 }
 
 /**
